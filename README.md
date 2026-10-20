@@ -107,7 +107,8 @@ This is **experimental, not a production polyfill**, as upstream explicitly note
 
 ## Reproduce validation locally
 
-Use Node 24. Fetch upstream into a separate source checkout and select one SHA.
+Use Node 24 (CI pins 24.22.0 to keep provenance stable across runners). Fetch
+upstream into a separate source checkout and select one SHA.
 From the control checkout run `npm ci --prefix automation` and
 `npm test --prefix automation`. In the upstream root run `npm ci --ignore-scripts`,
 then `npm run build --workspace=packages/dom-scheduler-prototype` and

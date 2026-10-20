@@ -97,6 +97,7 @@ test('workflow has safe structure and explicit job dependencies', () => {
   assert.deepEqual(parsed.jobs.publish.needs, ['sync', 'build']);
   assert.equal(parsed.jobs.build.permissions.contents, 'read');
   assert.equal(parsed.jobs.build.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with['package-manager-cache'], false);
+  assert.equal(parsed.jobs.build.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with['node-version'], '24.22.0');
   for (const job of Object.values(parsed.jobs)) {
     assert.ok(job['timeout-minutes'] > 0);
     for (const step of job.steps) {
