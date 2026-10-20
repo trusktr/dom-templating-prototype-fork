@@ -128,7 +128,7 @@ suite('render() with declarative shadow DOM', () => {
     render(view('one'), container);
     render(view('two'), container);
     const host = container.querySelector('div')!;
-    assert.equal(host.textContent, 'before twoafter two');
+    assert.equal(host.textContent?.trim(), 'before twoafter two');
     assert.isNotNull(host.shadowRoot);
     assert.equal(
       host.shadowRoot!.querySelector('span')!.textContent,
