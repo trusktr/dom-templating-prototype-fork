@@ -1,0 +1,56 @@
+{
+  "name": "hook-framework-demo",
+  "version": "0.0.0",
+  "description": "Preact-like component system built on DOM templating API",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "keywords": [],
+  "author": "",
+  "dependencies": {
+    "dom-scheduler-prototype": "*",
+    "dom-templating-prototype": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.2",
+    "@types/mocha": "^10.0.10",
+    "@web/test-runner": "^0.20.2",
+    "@web/test-runner-playwright": "^0.11.0",
+    "chai": "^5.2.0",
+    "prettier": "^3.5.3",
+    "ts-patch": "^3.2.1",
+    "typescript": "^5.8.3",
+    "wireit": "^0.14.12"
+  },
+  "wireit": {
+    "build": {
+      "command": "tspc --pretty",
+      "dependencies": [
+        "../dom-scheduler-prototype:build",
+        "../dom-templating-prototype:build",
+        "../dom-template-tsx:build"
+      ],
+      "files": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "outputs": [
+        "/*.{js,d.ts,js.map,d.ts.map}",
+        "test/**",
+        "!test/**/*.tsx",
+        "!test/**/*.ts"
+      ]
+    },
+    "test": {
+      "command": "wtr test/**/*_test.js",
+      "dependencies": [
+        "build"
+      ],
+      "files": [],
+      "outputs": []
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "target": "es2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "useDefineForClassFields": true,
+    "module": "esnext",
+    "rootDir": "./src",
+    "moduleResolution": "bundler",
+    "jsx": "react-native",
+    "types": ["mocha"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./",
+    "stripInternal": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "useUnknownInCatchVariables": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "skipDefaultLibCheck": true,
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        "transform": "../dom-template-tsx/index.js",
+        "componentFunctionName": "component",
+        "componentModule": "../index.js"
+      }
+    ]
+  },
+  "include": ["./src/**/*.ts", "./src/**/*.tsx"],
+  "exclude": []
+}

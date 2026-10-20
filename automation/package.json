@@ -1,0 +1,11 @@
+{
+  "name": "dom-templating-fork-automation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
