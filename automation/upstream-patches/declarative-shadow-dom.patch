@@ -1,0 +1,438 @@
+diff --git a/packages/dom-templating-prototype/src/lib/get-template-html.ts b/packages/dom-templating-prototype/src/lib/get-template-html.ts
+index 93e423b..c9f7610 100644
+--- a/packages/dom-templating-prototype/src/lib/get-template-html.ts
++++ b/packages/dom-templating-prototype/src/lib/get-template-html.ts
+@@ -10,12 +10,8 @@ export const boundAttributeSuffix = '$bound$';
+ // intention.
+ export const marker = `node-part`;
+ 
+-// String used to tell if a comment is a marker comment
+-const markerMatch = '?' + marker;
+-
+-// Text used to insert a comment marker node. We use processing instruction
+-// syntax because it's slightly smaller, but parses as a comment node.
+-const nodeMarker = `<${markerMatch}>`;
++// Expression indices preserve source order across shadow and light DOM.
++export const markerPattern = new RegExp(`${marker}-(\\d+)-`, 'g');
+ 
+ const SPACE_CHAR = `[ \t\n\f\r]`;
+ const ATTR_VALUE_CHAR = `[^ \t\n\f\r"'\`<>=]`;
+@@ -90,20 +86,18 @@ const rawTextElement = /^(?:script|style|textarea|title)$/i;
+ 
+ /**
+  * Returns an HTML string for the given TemplateStringsArray and result type
+- * (HTML or SVG), along with the case-sensitive bound attribute names in
+- * template order. The HTML contains comment markers denoting the `ChildPart`s
++ * (HTML or SVG), along with the case-sensitive bound attribute names keyed by
++ * expression index. The HTML contains comment markers denoting the `ChildPart`s
+  * and suffixes on bound attributes denoting the `AttributeParts`.
+  *
+  * @param strings template strings array
+  * @param kind HTML or SVG
+- * @return Array containing `[html, attrNames]` (array returned for terseness,
+- *     to avoid object fields since this code is shared with non-minified SSR
+- *     code)
++ * @return The marked HTML and bound attribute names.
+  */
+ export const getTemplateHtml = (
+   strings: TemplateStringsArray,
+   kind: TemplateResultKind
+-): {html: string; attributeNames: ReadonlyArray<string>} => {
++): {html: string; attributeNames: ReadonlyMap<number, string>} => {
+   // Insert makers into the template HTML to represent the position of
+   // bindings. The following code scans the template strings to determine the
+   // syntactic position of the bindings. They can be in text position, where
+@@ -113,10 +107,9 @@ export const getTemplateHtml = (
+ 
+   const l = strings.length - 1;
+ 
+-  // Stores the case-sensitive bound attribute names in the order of their
+-  // parts. ElementParts are also reflected in this array as undefined
+-  // rather than a string, to disambiguate from attribute bindings.
+-  const attributeNames: Array<string> = [];
++  // Key names by the first expression in each attribute so lookup does not
++  // depend on the relative traversal order of light and shadow DOM.
++  const attributeNames = new Map<number, string>();
+   let html = kind === 'svg' ? '<svg>' : kind === 'mathml' ? '<math>' : '';
+ 
+   // When we're inside a raw text tag (not its text content), the regex
+@@ -228,17 +221,18 @@ export const getTemplateHtml = (
+     // separate the marker from the tag end:
+     const end =
+       regex === tagEndRegex && strings[i + 1].startsWith('/>') ? ' ' : '';
++    const valueMarker = `${marker}-${i}-`;
+     html +=
+       regex === textEndRegex
+-        ? s + nodeMarker
++        ? s + `<?${valueMarker}>`
+         : attrNameEndIndex >= 0
+-          ? (attributeNames.push(attrName!),
++          ? (attributeNames.set(i, attrName!),
+             s.slice(0, attrNameEndIndex) +
+               boundAttributeSuffix +
+               s.slice(attrNameEndIndex)) +
+-            marker +
++            valueMarker +
+             end
+-          : s + marker + (attrNameEndIndex === -2 ? i : end);
++          : s + valueMarker + (attrNameEndIndex === -2 ? '' : end);
+   }
+ 
+   html +=
+diff --git a/packages/dom-templating-prototype/src/lib/template-instance.ts b/packages/dom-templating-prototype/src/lib/template-instance.ts
+index 2bed36a..b6986c5 100644
+--- a/packages/dom-templating-prototype/src/lib/template-instance.ts
++++ b/packages/dom-templating-prototype/src/lib/template-instance.ts
+@@ -12,15 +12,14 @@ export class TemplateInstance {
+   }
+ 
+   update(values: ReadonlyArray<unknown>) {
+-    let i = 0;
+-    for (const part of this.parts) {
++    for (let partIndex = 0; partIndex < this.parts.length; partIndex++) {
++      const part = this.parts[partIndex];
++      const i = this.template.parts[partIndex].valueIndex;
+       if (part instanceof MultiAttributePart) {
+         const end = i + part.strings.length - 1;
+         part.setValue(values.slice(i, end));
+-        i = end;
+       } else {
+         part.setValue(values[i]);
+-        i++;
+       }
+     }
+   }
+diff --git a/packages/dom-templating-prototype/src/lib/template.ts b/packages/dom-templating-prototype/src/lib/template.ts
+index fee7f3b..6b588d3 100644
+--- a/packages/dom-templating-prototype/src/lib/template.ts
++++ b/packages/dom-templating-prototype/src/lib/template.ts
+@@ -8,20 +8,12 @@ import {
+   boundAttributeSuffix,
+   getTemplateHtml,
+   marker,
++  markerPattern,
+ } from './get-template-html.js';
+ import {MultiPropertyPart, SinglePropertyPart} from './property-part.js';
+ import {TemplateInstance} from './template-instance.js';
+ import type {TemplatePart} from './template-part.js';
+ import {TemplateResult} from './template-result.js';
+-import {createMarker} from './utils.js';
+-
+-const walker = document.createTreeWalker(
+-  document,
+-  NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_COMMENT
+-);
+-
+-// String used to tell if a comment is a marker comment
+-const markerMatch = '?' + marker;
+ 
+ const isElement = (node: Node): node is Element =>
+   node.nodeType === Node.ELEMENT_NODE;
+@@ -29,6 +21,94 @@ const isElement = (node: Node): node is Element =>
+ const isComment = (node: Node): node is Comment =>
+   node.nodeType === Node.COMMENT_NODE;
+ 
++const containsExpressions = (root: Node): boolean => {
++  if (
++    (root.nodeType === Node.TEXT_NODE || isComment(root)) &&
++    root.textContent!.match(markerPattern) !== null
++  ) {
++    return true;
++  }
++  if (isElement(root)) {
++    if (
++      Array.from(root.attributes).some(
++        ({name, value}) =>
++          name.match(markerPattern) !== null ||
++          value.match(markerPattern) !== null
++      ) ||
++      (root instanceof HTMLTemplateElement &&
++        containsExpressions(root.content)) ||
++      (root.shadowRoot !== null && containsExpressions(root.shadowRoot))
++    ) {
++      return true;
++    }
++  }
++  return Array.from(root.childNodes).some(containsExpressions);
++};
++
++// Use the same shadow-inclusive order when preparing and cloning parts.
++function* walkNodes(
++  root: Node,
++  shadowHosts?: ReadonlySet<number>
++): Generator<Node> {
++  let index = 0;
++  function* walkChildren(parent: Node): Generator<Node> {
++    for (const node of parent.childNodes) {
++      const nodeIndex = index;
++      if (isElement(node) || isComment(node)) {
++        index++;
++        yield node;
++      }
++      if (
++        isElement(node) &&
++        node.shadowRoot !== null &&
++        (shadowHosts === undefined || shadowHosts.has(nodeIndex))
++      ) {
++        yield* walkChildren(node.shadowRoot);
++      }
++      yield* walkChildren(node);
++    }
++  }
++  yield* walkChildren(root);
++}
++
++// Preprocess inert DOM rather than rewriting tag-like strings in attributes,
++// comments, or raw-text elements. No interpolation values are parsed as HTML.
++const implyClonableShadowRoots = (root: ParentNode, active = true): void => {
++  for (const element of root.children) {
++    if (element instanceof HTMLTemplateElement) {
++      const mode = element.getAttribute('shadowrootmode')?.toLowerCase();
++      if (
++        mode !== 'open' &&
++        mode !== 'closed' &&
++        containsExpressions(element.content)
++      ) {
++        throw new Error(
++          'Expressions are not supported inside `template` elements.'
++        );
++      }
++      if (active && mode === 'closed') {
++        throw new Error('Closed declarative shadow roots are not supported.');
++      }
++      if (mode === 'open' || mode === 'closed') {
++        element.setAttribute('shadowrootclonable', '');
++      }
++      implyClonableShadowRoots(element.content, active && mode === 'open');
++    } else {
++      // These HTML elements discard one leading newline during parsing. Restore
++      // it in the inert serialization so the native second parse is lossless.
++      if (
++        element.namespaceURI === 'http://www.w3.org/1999/xhtml' &&
++        /^(pre|listing|textarea)$/.test(element.localName) &&
++        element.firstChild?.nodeType === Node.TEXT_NODE &&
++        element.firstChild.textContent!.startsWith('\n')
++      ) {
++        element.firstChild.textContent = '\n' + element.firstChild.textContent;
++      }
++      implyClonableShadowRoots(element, active);
++    }
++  }
++};
++
+ /*
+  * Caches of prepared templates, keyed by the tagged TemplateStringsArray.
+  */
+@@ -58,14 +138,14 @@ export const getTemplate = (result: TemplateResult) => {
+ export class Template {
+   element: HTMLTemplateElement;
+ 
+-  parts: Array<{part: TemplatePart; index: number}> = [];
++  parts: Array<{part: TemplatePart; index: number; valueIndex: number}> = [];
++
++  #shadowHosts = new Set<number>();
+ 
+   constructor(templateResult: TemplateResult) {
+     const {strings, kind} = templateResult;
+-    let node: Node | null;
+     let nodeIndex = 0;
+-    let attrNameIndex = 0;
+-    const partCount = strings.length - 1;
++    let attributeCount = 0;
+     const parts = this.parts;
+ 
+     // Create the template element
+@@ -73,8 +153,8 @@ export class Template {
+     // console.log('html', html);
+     const el = (this.element = document.createElement('template'));
+     el.innerHTML = html as unknown as string;
+-
+-    walker.currentNode = this.element.content;
++    implyClonableShadowRoots(el.content);
++    el.setHTMLUnsafe(el.innerHTML);
+ 
+     // Re-parent SVG or MathML nodes into template root
+     if (
+@@ -85,17 +165,19 @@ export class Template {
+       wrapper.replaceWith(...wrapper.childNodes);
+     }
+ 
+-    // Walk the template to find binding markers and create TemplateParts
+-    while ((node = walker.nextNode()) !== null && parts.length < partCount) {
++    // Walk all nodes, including roots in templates with no bindings.
++    for (const node of walkNodes(this.element.content)) {
+       if (isElement(node)) {
++        if (node.shadowRoot !== null) {
++          this.#shadowHosts.add(nodeIndex);
++        }
+         const tag = node.localName;
+-        // Warn if `textarea` includes an expression and throw if `template`
+-        // does since these are not supported. We do this by checking
+-        // innerHTML for anything that looks like a marker. This catches
+-        // cases like bindings in textarea there markers turn into text nodes.
++        // Ordinary inert templates and textarea still do not support bindings.
++        // DSD templates have already been consumed by the native parser.
+         if (
+-          tag === 'textarea' ||
+-          (tag === 'template' && node.innerHTML.includes(marker))
++          (tag === 'textarea' && node.textContent!.includes(marker)) ||
++          (node instanceof HTMLTemplateElement &&
++            containsExpressions(node.content))
+         ) {
+           throw new Error(
+             `Expressions are not supported inside \`${tag}\` elements.`
+@@ -110,9 +192,12 @@ export class Template {
+               // The bound attribute name as it appears in the template string.
+               // This name is case-preserved, so it can be used for arbitrary
+               // property and event names.
+-              const sourceName = attributeNames[attrNameIndex++];
+               const value = node.getAttribute(attributeName)!;
+-              const statics = value.split(marker);
++              const matches = Array.from(value.matchAll(markerPattern));
++              const valueIndex = Number(matches[0][1]);
++              const sourceName = attributeNames.get(valueIndex)!;
++              attributeCount++;
++              const statics = value.split(new RegExp(`${marker}-\\d+-`));
+               const isSingleValueBinding =
+                 statics.length === 2 && statics[0] === '' && statics[1] === '';
+ 
+@@ -132,12 +217,16 @@ export class Template {
+               parts.push({
+                 part: new partConstructor(node as HTMLElement, name, statics),
+                 index: nodeIndex,
++                valueIndex,
+               });
+               node.removeAttribute(attributeName);
+-            } else if (attributeName.startsWith(marker)) {
++            } else if (new RegExp(`^${marker}-\\d+-$`).test(attributeName)) {
+               parts.push({
+                 part: new ElementPart(node),
+                 index: nodeIndex,
++                valueIndex: Number(
++                  Array.from(attributeName.matchAll(markerPattern))[0][1]
++                ),
+               });
+               node.removeAttribute(attributeName);
+             }
+@@ -148,46 +237,41 @@ export class Template {
+           // comments, so we need to split the text content on markers,
+           // create a Text node for each segment, and create a TemplatePart
+           // for each marker.
+-          const strings = node.textContent!.split(marker);
+-          const lastIndex = strings.length - 1;
+-          if (lastIndex > 0) {
++          const text = node.textContent!;
++          const matches = Array.from(text.matchAll(markerPattern));
++          if (matches.length > 0) {
+             node.textContent = '';
+-            // Generate a new text node for each literal section
+-            // These nodes are also used as the markers for child parts
+-            for (let i = 0; i < lastIndex; i++) {
+-              node.append(strings[i], createMarker());
+-              // Walk past the marker node we just added
+-              walker.nextNode();
+-              parts.push({
+-                part: new ChildPart(node, node.nextSibling),
+-                index: ++nodeIndex,
+-              });
++            let end = 0;
++            for (const match of matches) {
++              node.append(
++                text.slice(end, match.index),
++                document.createComment('?' + match[0])
++              );
++              end = match.index! + match[0].length;
+             }
+-            // Note because this marker is added after the walker's current
+-            // node, it will be walked to in the outer loop (and ignored), so we
+-            // don't need to adjust nodeIndex here
+-            // TODO (justinfagnani): why do we need this marker?
+-            node.append(strings[lastIndex], document.createComment(''));
++            node.append(text.slice(end), document.createComment(''));
+           }
+         }
+       } else if (isComment(node)) {
+         const data = node.data;
+-        if (data === markerMatch) {
++        const matches = Array.from(data.matchAll(markerPattern));
++        if (matches.length === 1 && data === '?' + matches[0][0]) {
+           parts.push({
+             part: new ChildPart(node, node.nextSibling),
+             index: nodeIndex,
++            valueIndex: Number(matches[0][1]),
+           });
+         } else {
+-          let i = -1;
+-          while ((i = node.data.indexOf(marker, i + 1)) !== -1) {
++          for (const match of matches) {
+             parts.push({
+               part: new CommentPart(node),
+               index: nodeIndex,
++              valueIndex: Number(match[1]),
+             });
+-            // Move to the end of the match
+-            i += marker.length - 1;
+           }
+         }
++        // Retain the existing observable marker representation.
++        node.data = data.replace(markerPattern, marker);
+       }
+       nodeIndex++;
+     }
+@@ -195,10 +279,9 @@ export class Template {
+     // If there was a duplicate attribute on a tag, then when the tag is
+     // parsed into an element the attribute gets de-duplicated. We can detect
+     // this mismatch if we haven't precisely consumed every attribute name
+-    // when preparing the template. This works because `attrNames` is built
+-    // from the template string and `attrNameIndex` comes from processing the
+-    // resulting DOM.
+-    if (attributeNames.length !== attrNameIndex) {
++    // when preparing the template. Names are recorded by the HTML scanner;
++    // the count comes from processing the resulting DOM.
++    if (attributeNames.size !== attributeCount) {
+       throw new Error(
+         `Detected duplicate attribute bindings. This occurs if your template ` +
+           `has duplicate attributes on an element tag. For example ` +
+@@ -211,33 +294,20 @@ export class Template {
+       );
+     }
+ 
+-    // Set walker.currentNode to another node here to prevent a memory leak
+-    walker.currentNode = document;
++    // A shadow root can precede light DOM during traversal even when its
++    // declaration followed light-DOM expressions in the source.
++    parts.sort((a, b) => a.valueIndex - b.valueIndex);
+   }
+ 
+   clone() {
+     // TODO (justinfagnani): support scoped custom element registries here
+     const fragment = document.importNode(this.element.content, true);
+-    const partClones: Array<TemplatePart> = [];
+-    walker.currentNode = fragment;
+-
+-    let node = walker.nextNode()!;
+-    let nodeIndex = 0;
+-    let partIndex = 0;
+-    let nextTemplatePart = this.parts[0];
+-
+-    while (nextTemplatePart !== undefined) {
+-      if (nodeIndex === nextTemplatePart.index) {
+-        partClones.push(nextTemplatePart.part.clone(node));
+-        nextTemplatePart = this.parts[++partIndex];
+-      }
+-      if (nodeIndex !== nextTemplatePart?.index) {
+-        node = walker.nextNode()!;
+-        nodeIndex++;
+-      }
+-    }
+-    // Set walker.currentNode to another node here to prevent a memory leak
+-    walker.currentNode = document;
++    // Custom-element constructors may create unrelated roots during import.
++    // Only enter the roots that were present in the prepared template.
++    const nodes = Array.from(walkNodes(fragment, this.#shadowHosts));
++    const partClones = this.parts.map(({part, index}) =>
++      part.clone(nodes[index])
++    );
+ 
+     const instance = new TemplateInstance(this, partClones);
+     return {instance, fragment};
