@@ -1,0 +1,1 @@
+{"version":3,"file":"template-part.d.ts","sourceRoot":"","sources":["../src/lib/template-part.ts"],"names":[],"mappings":"AAAA,8BAAsB,YAAY;IAChC,QAAQ,CAAC,KAAK,CAAC,IAAI,EAAE,IAAI,GAAG,YAAY;IAExC,QAAQ,CAAC,QAAQ,CAAC,KAAK,EAAE,OAAO,EAAE,cAAc,CAAC,EAAE,MAAM,GAAG,IAAI;IAEhE,QAAQ,CAAC,YAAY,CAAC,SAAS,EAAE,OAAO,GAAG,IAAI;CAChD"}

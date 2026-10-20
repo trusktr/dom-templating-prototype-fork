@@ -1,0 +1,1 @@
+{"version":3,"file":"event-part.d.ts","sourceRoot":"","sources":["../src/lib/event-part.ts"],"names":[],"mappings":"AAAA,OAAO,EAAC,mBAAmB,EAAC,MAAM,qBAAqB,CAAC;AAGxD,OAAO,EAAC,YAAY,EAAC,MAAM,oBAAoB,CAAC;AAKhD,qBAAa,SAAU,SAAQ,mBAAmB;;IAIvC,QAAQ,CAAC,WAAW,EAAE,OAAO;IA2CtC,WAAW,CAAC,KAAK,EAAE,KAAK;IAaf,KAAK,CAAC,IAAI,EAAE,IAAI,GAAG,YAAY;CAGzC"}

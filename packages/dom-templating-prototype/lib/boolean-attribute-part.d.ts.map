@@ -1,0 +1,1 @@
+{"version":3,"file":"boolean-attribute-part.d.ts","sourceRoot":"","sources":["../src/lib/boolean-attribute-part.ts"],"names":[],"mappings":"AAAA,OAAO,EAAC,mBAAmB,EAAC,MAAM,qBAAqB,CAAC;AAExD,OAAO,EAAC,YAAY,EAAC,MAAM,oBAAoB,CAAC;AAEhD,qBAAa,oBAAqB,SAAQ,mBAAmB;cACxC,WAAW,CAAC,KAAK,EAAE,OAAO;IAIpC,KAAK,CAAC,IAAI,EAAE,IAAI,GAAG,YAAY;CAGzC"}
