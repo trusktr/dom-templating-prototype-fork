@@ -3,7 +3,7 @@
   "sourceSha": "1fb12bf503d6abbac3fe7fd8bd8aff064e3b593f",
   "sourceBranch": "main",
   "controlSha": "3dc658194a26de0d554984466e68d5e15e360100",
-  "node": "v24.21.0",
+  "node": "v24.22.0",
   "esbuild": "0.28.2",
   "packages": [
     "dom-templating-prototype",
