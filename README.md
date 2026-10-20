@@ -129,74 +129,67 @@ control toolchain is separately pinned in `automation/package-lock.json`.
 
 ## Declarative Shadow DOM investigation
 
-The upstream-style tests in `automation/upstream-tests/` reproduce declarative
-shadow DOM in a `TemplateResult`. They are deliberately **not included in the
-daily publishing gate**: six rendering expectations currently fail upstream.
-They are assets for an upstream fix, not a local runtime patch or a changed
-browser build. Copy them into upstream's
-`packages/dom-templating-prototype/src/test/` when preparing that change.
+The supplied source of https://codepen.io/trusktr/pen/rayKaWB is now covered by
+`automation/upstream-tests/codepen-shadow-counter_test.ts`: the same host, default
+slot, `royalblue` shadow style, and shadow/light counter bindings. Instead of
+leaving a real interval running, the test calls `update()` deterministically for
+counts 0–3. It checks both texts, slot assignment, scoped computed colors, implied
+root clonability, and stable host/root/paragraph identities.
 
-The reported example is https://codepen.io/trusktr/pen/rayKaWB. CodePen could not
-be reached from the sandbox (DNS resolution failed), so these are minimal,
-independent reproductions, **not a verified reproduction of the Pen's exact
-source**. The Pen's HTML/JS is still needed to confirm any example-specific issue.
+An **implemented, upstream-ready source patch** is retained at
+`automation/upstream-patches/declarative-shadow-dom.patch`, against upstream
+`1fb12bf503d6abbac3fe7fd8bd8aff064e3b593f`. It is not automatically applied to
+`main` or published builds: those branches still follow upstream. In particular,
+the example's immutable `@7511433...` bundle URL cannot acquire a fix. An upstream
+merge and a newly published build, or an explicitly patched local build, are
+needed to run the fixed implementation. No upstream PR has been opened.
 
-### Reproduced against upstream `1fb12bf503d6abbac3fe7fd8bd8aff064e3b593f`
+### Implemented changes
 
-- Unmodified upstream plus both fixtures: **181 passed, 6 failed, 4 skipped**.
-  The existing templating tests account for 176 passes and all four skips;
-  the fixtures add two passing rendering controls, three passing native-platform
-  controls, and six failing DSD cases.
-- Static `<template shadowrootmode="open">` content remains inert: no shadow root.
-- Interpolated shadow content throws an error saying expressions are not supported
-  inside `template` elements.
-- Changing only `el.innerHTML = …` to `el.setHTMLUnsafe(…)` in a temporary source
-  checkout still gives **181 passed, 6 failed, 4 skipped**. Some failures change:
-  shadow attributes produce a misleading duplicate-binding error, and adjacent
-  expressions can render into the wrong position. This experiment was discarded,
-  not shipped as a fix.
+- **Native DSD parsing:** `Template` uses `setHTMLUnsafe` to create roots.
+  An initial inert DOM parse adds `shadowrootclonable` to actual DSD declarations
+  before native parsing. This avoids regex-rewriting `<template>` strings inside
+  attributes, comments, scripts, or styles. Only static template strings and
+  generated placeholders are parsed; interpolation values are still assigned
+  through parts, never concatenated into parser input. The preprocessing pass
+  compensates for newline stripping in `pre`, `textarea`, and `listing`, and
+  rejects ordinary-template bindings before native parsing can hide them in roots.
+- **Recursive traversal:** preparation and cloning use the same recursive
+  shadow-inclusive traversal instead of a shared `TreeWalker`. Implied clonability
+  lets `document.importNode` retain independently cloned shadow trees. Clone
+  traversal ignores unrelated roots created by custom-element constructors.
+- **Original binding order:** `getTemplateHtml` emits expression-indexed markers
+  and keys original case-sensitive attribute names by expression index.
+  `TemplateInstance` reads values by those indices. Shadow-first traversal alone
+  would otherwise swap bindings if light content preceded the DSD declaration.
+  Duplicate-attribute errors and ordinary inert-template binding rejection remain.
+- **Boundaries and raw text:** part endpoints are computed after native parsing
+  consumes the declaration. Raw-text markers are split before recursively visiting
+  them, so shadow styles and their updates work without invalidating clone indices.
+  Existing observable comment-marker formatting is retained.
 
-The three native-platform tests independently confirm that `innerHTML` does not
-activate DSD, `setHTMLUnsafe` does, `document.importNode(..., true)` drops a
-non-clonable shadow root, and a normal `TreeWalker` does not enter even a clonable
-shadow root. These results were actually executed in Playwright Chromium 141.
+The patch changes only `src/lib/get-template-html.ts`, `src/lib/template.ts`, and
+`src/lib/template-instance.ts` in `packages/dom-templating-prototype`.
+It is an independent implementation; the linked
+[nimble-html traversal/parser approach](https://raw.githubusercontent.com/lume/nimble-html/refs/heads/main/html.js)
+was inspected as a reference, not copied.
 
-### Required upstream change
+**Scope:** this candidate supports **open** DSD roots. Active `closed` declarations
+throw an explicit unsupported error rather than silently losing inaccessible
+bindings. Ordinary templates remain inert (native DSD may still be prepared inside
+their inert contents), and invalid static modes follow native inert-template
+behavior. Native `setHTMLUnsafe` and clonable-root support are required; there is
+no fallback/polyfill. Delegated focus, serializability, nesting, repeated clones,
+text/attribute/property/boolean/event bindings, mixed ordering and raw-text styles
+are covered. Custom-element constructors that replace cloned root content remain
+outside this candidate's guarantees.
 
-The relevant file is upstream
-`packages/dom-templating-prototype/src/lib/template.ts`:
+### Reproduce and prepare an upstream PR
 
-1. **Parsing/instantiation** (line 75): support DSD creation instead of relying
-   solely on `innerHTML`. Native parsing is one option; explicitly instantiating
-   DSD from the inert template tree for each clone is another. Preserve ordinary
-   inert templates, validate modes/hosts, and define closed-root and DSD flag
-   behavior. This is feature work, not just a parser API substitution.
-2. **Binding preparation** (lines 89–103): remove the blanket rejection only for
-   supported DSD content and discover its child/attribute bindings. Ordinary
-   `<template>` expression semantics should not accidentally change.
-3. **Binding coordinates and cloning** (lines 218–243): preparation and cloning
-   must use the same shadow-aware mapping, preserve expression order from the
-   source, and create fresh shadow trees for every instance. Simply visiting all
-   shadow roots before light children can reorder expressions around the DSD
-   template's original position. Do not require authors to add
-   `shadowrootclonable` just to make the renderer work.
-4. **Part boundaries** (`src/lib/child-part.ts`, `clone()`): consuming a DSD
-   template must not invalidate a preceding child part's `endNode` (currently
-   captured as `node.nextSibling`). Resolve/remap boundaries if activation moves
-   or removes nodes. Updates must keep the host, root, and bound nodes stable.
-
-The regression covers static DSD, dynamic text/attributes and identity on update,
-mixed light/shadow expression order, repeated cached-template instances, adjacent
-child-part boundaries, and nested roots. An upstream implementation should also
-cover closed roots, DSD flags, invalid modes/hosts, and existing custom-element
-roots before being considered complete. No production fix or upstream PR is
-included in this investigation.
-
-### Run the regression
-
-Use a disposable upstream checkout at the SHA above and the existing upstream
-toolchain. With `CONTROL` and `SOURCE` set to **absolute paths** to the control and
-disposable source checkouts:
+Use a disposable upstream checkout at the SHA above and its existing toolchain.
+Set `CONTROL` and `SOURCE` to **absolute paths** to the control and disposable
+source checkouts. The regression imports the local compiled implementation so the
+same test can be run before and after the patch, rather than relying on CDN cache.
 
 ```sh
 cp "$CONTROL"/automation/upstream-tests/*_test.ts \
@@ -204,18 +197,34 @@ cp "$CONTROL"/automation/upstream-tests/*_test.ts \
 cd "$SOURCE"
 npm ci --ignore-scripts
 npx --no-install playwright install chromium
+npm run build --workspace=packages/dom-templating-prototype
+cd "$SOURCE/packages/dom-templating-prototype"
+../../node_modules/.bin/wtr test/codepen-shadow-counter_test.js
+```
+
+On pristine upstream the counter test fails with an error saying expressions are
+not supported inside `template` elements.
+Then apply the source patch and run the complete templating suite:
+
+```sh
+cd "$SOURCE"
+git apply --check "$CONTROL/automation/upstream-patches/declarative-shadow-dom.patch"
+git apply "$CONTROL/automation/upstream-patches/declarative-shadow-dom.patch"
 npm test --workspace=packages/dom-templating-prototype
 ```
 
-The test command also compiles the TypeScript fixtures using upstream's existing
-build script. Exit status 1 with the six failures above is the expected current
-result; do not weaken those assertions to turn unsupported behavior into a pass.
-To run only the passing platform controls after compilation:
+The fixtures compile through upstream's existing TypeScript/Wireit scripts and
+run through its existing Web Test Runner/Playwright setup. They are **not added to
+the unpatched daily publication gate**. For an upstream PR, include the three
+source changes and the fixtures under the upstream `src/test/` directory.
 
-```sh
-cd "$SOURCE/packages/dom-templating-prototype"
-../../node_modules/.bin/wtr test/shadow-dom-platform_test.js
-```
+Executed in Chromium 141: the pristine counter test fails; the patched templating
+suite passes **206 tests, 0 failures, 4 existing skips**, including 176 original
+tests and 30 regression/platform checks. Scheduler tests also pass **6 tests,
+1 existing skip**. The broader unpatched expanded fixture
+timed out, so no aggregate baseline failure count is asserted for that fixture.
+The generated self-contained ESM bundle also passed the counter test (including
+computed styles and slots) and the existing bundled/unbundled browser smoke test.
 
 ## Attribution and licensing
 

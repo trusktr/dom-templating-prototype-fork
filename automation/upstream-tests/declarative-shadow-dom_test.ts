@@ -1,8 +1,7 @@
 import {assert} from 'chai';
 import {html, render} from '../index.js';
 
-// Minimal reproductions of declarative shadow DOM in a rendered TemplateResult.
-// The linked CodePen could not be retrieved; these are not a copy of its source.
+// Regressions for declarative shadow DOM in a rendered TemplateResult.
 suite('render() with declarative shadow DOM', () => {
   let container: HTMLDivElement;
 
@@ -101,6 +100,346 @@ suite('render() with declarative shadow DOM', () => {
       Array.from(container.querySelectorAll('p'), (node) => node.textContent),
       ['before two', 'after two']
     );
+  });
+
+  test('keeps attribute names, multi-value bindings and expression order before DSD', () => {
+    const view = (value: string) =>
+      html`<div>
+        <p title="light-${value}-${value}" .textContent=${'light ' + value}></p>
+        <template shadowrootmode="open">
+          <span
+            title="shadow-${value}-${value}"
+            .textContent=${'shadow ' + value}
+          ></span>
+        </template>
+        <b title=${'after ' + value}>${'after ' + value}</b>
+      </div>`;
+    render(view('one'), container);
+    render(view('two'), container);
+    const host = container.querySelector('div')!;
+    const light = host.querySelector('p')!;
+    const shadow = host.shadowRoot!.querySelector('span')!;
+    assert.equal(light.title, 'light-two-two');
+    assert.equal(light.textContent, 'light two');
+    assert.equal(shadow.title, 'shadow-two-two');
+    assert.equal(shadow.textContent, 'shadow two');
+    assert.equal(host.querySelector('b')!.title, 'after two');
+    assert.equal(host.querySelector('b')!.textContent, 'after two');
+  });
+
+  test('updates event, boolean and property bindings inside shadow roots', () => {
+    const clicked: string[] = [];
+    const view = (value: string, disabled: boolean) =>
+      html`<div>
+        <template shadowrootmode="open">
+          <button
+            ?disabled=${disabled}
+            @click=${() => clicked.push(value)}
+            .title=${value}
+          >
+            ${value}
+          </button>
+        </template>
+      </div>`;
+    render(view('one', false), container);
+    const button = container
+      .querySelector('div')!
+      .shadowRoot!.querySelector('button')!;
+    button.click();
+    assert.deepEqual(clicked, ['one']);
+    render(view('two', true), container);
+    assert.isTrue(button.disabled);
+    assert.equal(button.title, 'two');
+    assert.equal(button.textContent?.trim(), 'two');
+    button.click();
+    assert.deepEqual(clicked, ['one']);
+    render(view('three', false), container);
+    button.click();
+    assert.deepEqual(clicked, ['one', 'three']);
+  });
+
+  test('updates raw-text style bindings inside shadow roots', () => {
+    const view = (color: string) =>
+      html`<div>
+        <template shadowrootmode="open">
+          <style>
+            p {
+              color: ${color};
+            }
+          </style>
+          <p>Styled</p>
+        </template>
+      </div>`;
+    render(view('royalblue'), container);
+    const root = container.querySelector('div')!.shadowRoot!;
+    const style = root.querySelector('style')!;
+    const paragraph = root.querySelector('p')!;
+    assert.equal(getComputedStyle(paragraph).color, 'rgb(65, 105, 225)');
+    render(view('red'), container);
+    assert.strictEqual(root.querySelector('style'), style);
+    assert.equal(getComputedStyle(paragraph).color, 'rgb(255, 0, 0)');
+  });
+
+  test('never parses interpolated strings as shadow markup', () => {
+    const value =
+      '<template shadowrootmode="open"><p>Not markup</p></template>';
+    render(
+      html`<div>
+        <template shadowrootmode="open"><p>${value}</p></template>
+      </div>`,
+      container
+    );
+    const root = container.querySelector('div')!.shadowRoot!;
+    assert.equal(root.querySelector('p')!.textContent, value);
+    assert.isNull(root.querySelector('template'));
+  });
+
+  test('does not rewrite template-looking text in style content or attributes', () => {
+    const view = (value: string) =>
+      html`<div data-markup='<template shadowrootmode="open">'>
+        <template shadowrootmode="open">
+          <style>
+            /* <template shadowrootmode="open"> */
+          </style>
+          <p>${value}</p>
+        </template>
+      </div>`;
+    render(view('one'), container);
+    const host = container.querySelector('div')!;
+    assert.equal(
+      host.getAttribute('data-markup'),
+      '<template shadowrootmode="open">'
+    );
+    const root = host.shadowRoot!;
+    assert.equal(
+      root.querySelector('style')!.textContent?.trim(),
+      '/* <template shadowrootmode="open"> */'
+    );
+    assert.equal(root.querySelector('p')!.textContent, 'one');
+  });
+
+  test('respects DSD flags and explicit clonability', () => {
+    render(
+      html`<div>
+        <template
+          shadowrootmode="open"
+          shadowrootclonable
+          shadowrootdelegatesfocus
+          shadowrootserializable
+          ><p>${'flags'}</p></template
+        >
+      </div>`,
+      container
+    );
+    const root = container.querySelector('div')!.shadowRoot!;
+    assert.isTrue(root.clonable);
+    assert.isTrue(root.delegatesFocus);
+    assert.isTrue(root.serializable);
+    assert.equal(root.querySelector('p')!.textContent, 'flags');
+  });
+
+  test('invalid shadow modes remain ordinary inert templates', () => {
+    render(
+      html`<div>
+        <template shadowrootmode="invalid"><p>Inert</p></template>
+      </div>`,
+      container
+    );
+    const host = container.querySelector('div')!;
+    assert.isNull(host.shadowRoot);
+    assert.equal(
+      host.querySelector('template')!.content.querySelector('p')!.textContent,
+      'Inert'
+    );
+  });
+
+  test('rejects closed roots explicitly instead of losing their bindings', () => {
+    assert.throws(
+      () =>
+        render(
+          html`<div>
+            <template shadowrootmode="closed"><p>${'hidden'}</p></template>
+          </div>`,
+          container
+        ),
+      'Closed declarative shadow roots are not supported.'
+    );
+  });
+
+  test('keeps ordinary templates inert even when their content contains native DSD', () => {
+    render(
+      html`<template
+        ><div>
+          <template shadowrootmode="closed"><p>Inert</p></template>
+        </div></template
+      >`,
+      container
+    );
+    const content = container.querySelector('template')!.content;
+    assert.isNull(content.querySelector('div')!.shadowRoot);
+    assert.isNull(container.querySelector('div'));
+    assert.isNull(
+      content.querySelector('template'),
+      'native parsing consumes DSD'
+    );
+  });
+
+  test('preserves duplicate-attribute binding errors inside shadow trees', () => {
+    assert.throws(
+      () =>
+        render(
+          html`<div>
+            <template shadowrootmode="open"
+              ><p title=${'one'} title=${'two'}></p
+            ></template>
+          </div>`,
+          container
+        ),
+      'Detected duplicate attribute bindings.'
+    );
+  });
+
+  test('still rejects dynamic content inside ordinary inert templates', () => {
+    assert.throws(
+      () =>
+        render(html`<template><p>${'not active'}</p></template>`, container),
+      'Expressions are not supported inside `template` elements.'
+    );
+  });
+
+  test('rejects bindings hidden inside DSD within an ordinary inert template', () => {
+    assert.throws(
+      () =>
+        render(
+          html`<template
+            ><div>
+              <template shadowrootmode="open">${'hidden'}</template>
+            </div></template
+          >`,
+          container
+        ),
+      'Expressions are not supported inside `template` elements.'
+    );
+  });
+
+  test('rejects bindings hidden in an unconsumed second DSD declaration', () => {
+    assert.throws(
+      () =>
+        render(
+          html`<div>
+            <template shadowrootmode="open"></template>
+            <template shadowrootmode="open"
+              ><section>
+                <template shadowrootmode="open">${'hidden'}</template>
+              </section></template
+            >
+          </div>`,
+          container
+        ),
+      'Expressions are not supported inside `template` elements.'
+    );
+  });
+
+  test('rejects bindings in DSD declarations on invalid shadow hosts', () => {
+    assert.throws(
+      () =>
+        render(
+          html`<a><template shadowrootmode="open">${'hidden'}</template></a>`,
+          container
+        ),
+      'Expressions are not supported inside `template` elements.'
+    );
+  });
+
+  test('preserves meaningful leading newlines across native parser preprocessing', () => {
+    render(
+      html`<pre>${'before'}</pre>
+        <div>
+          <template shadowrootmode="open">
+            <pre>
+
+hello</pre
+            >
+            <textarea>
+
+hello</textarea
+            >
+            <listing>
+
+hello</listing
+            >
+          </template>
+        </div>`,
+      container
+    );
+    const root = container.querySelector('div')!.shadowRoot!;
+    for (const tag of ['pre', 'textarea', 'listing']) {
+      assert.equal(root.querySelector(tag)!.textContent, '\nhello');
+    }
+  });
+
+  test('does not consume literal marker-prefixed attributes', () => {
+    render(
+      html`<div node-part-id="literal">
+        <template shadowrootmode="open"
+          ><p node-part-name="literal">${'shadow'}</p></template
+        >
+      </div>`,
+      container
+    );
+    const host = container.querySelector('div')!;
+    assert.equal(host.getAttribute('node-part-id'), 'literal');
+    assert.equal(
+      host.shadowRoot!.querySelector('p')!.getAttribute('node-part-name'),
+      'literal'
+    );
+  });
+
+  test('ignores unrelated roots created by custom-element constructors during cloning', () => {
+    const tag = 'dsd-test-existing-root';
+    if (!customElements.get(tag)) {
+      customElements.define(
+        tag,
+        class extends HTMLElement {
+          constructor() {
+            super();
+            const root = this.attachShadow({mode: 'open'});
+            root.append(document.createElement('span'));
+          }
+        }
+      );
+    }
+    const view = (value: string) =>
+      html`<dsd-test-existing-root></dsd-test-existing-root>
+        <p>${value}</p>`;
+    render(view('one'), container);
+    const paragraph = container.querySelector('p')!;
+    render(view('two'), container);
+    assert.strictEqual(container.querySelector('p'), paragraph);
+    assert.equal(paragraph.textContent, 'two');
+    assert.isNotNull(
+      container.querySelector(tag)!.shadowRoot!.querySelector('span')
+    );
+  });
+
+  test('does not rewrite template-looking script text', () => {
+    render(
+      html`<div>
+        <template shadowrootmode="open"
+          ><script type="text/plain">
+            const example = '<template shadowrootmode="open">';
+          </script>
+          <p>${'safe'}</p></template
+        >
+      </div>`,
+      container
+    );
+    const root = container.querySelector('div')!.shadowRoot!;
+    assert.equal(
+      root.querySelector('script')!.textContent?.trim(),
+      `const example = '<template shadowrootmode="open">';`
+    );
+    assert.equal(root.querySelector('p')!.textContent, 'safe');
   });
 
   test('creates independent shadow trees when a cached template is cloned twice', () => {
