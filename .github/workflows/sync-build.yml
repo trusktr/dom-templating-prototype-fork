@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          node-version: '24.22.0'
           package-manager-cache: false
       - run: npm ci
         working-directory: control/automation
