@@ -1,0 +1,120 @@
+name: Sync upstream and publish browser build
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [copilot/main, main]
+    paths:
+      - '.github/workflows/sync-build.yml'
+      - 'automation/**'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-sync-and-build
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      source_sha: ${{ steps.sync.outputs.source_sha }}
+      source_branch: ${{ steps.sync.outputs.source_branch }}
+      control_sha: ${{ steps.control.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: copilot/main
+          path: control
+          persist-credentials: false
+      - id: control
+        working-directory: control
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: sync
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node automation/sync.mjs
+
+  build:
+    needs: sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.sync.outputs.control_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: justinfagnani/dom-templating-api-proposal
+          ref: ${{ needs.sync.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: control/automation
+      - run: npm test
+        working-directory: control/automation
+      - run: npm ci --ignore-scripts
+        working-directory: source
+      - name: Compile required workspaces using upstream scripts
+        working-directory: source
+        run: |
+          npm run build --workspace=packages/dom-scheduler-prototype
+          npm run build --workspace=packages/dom-templating-prototype
+      - name: Install Chromium for upstream tests and browser validation
+        working-directory: source
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Run upstream browser tests
+        working-directory: source
+        run: |
+          npm test --workspace=packages/dom-scheduler-prototype
+          npm test --workspace=packages/dom-templating-prototype
+      - name: Package and validate browser modules
+        env:
+          SOURCE_SHA: ${{ needs.sync.outputs.source_sha }}
+          SOURCE_BRANCH: ${{ needs.sync.outputs.source_branch }}
+          CONTROL_SHA: ${{ needs.sync.outputs.control_sha }}
+        run: |
+          node control/automation/build.mjs source output
+          node control/automation/smoke.mjs source output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-build
+          path: output/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [sync, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.sync.outputs.control_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: browser-build
+          path: output
+      - name: Publish only validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node control/automation/publish.mjs output

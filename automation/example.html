@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DOM Templating prototype</title>
+<div id="demo"></div>
+<script type="module">
+  // For CodePen, replace this local URL with the documented jsDelivr URL.
+  import {html, render} from './dom-templating.js';
+  render(html`<p>Hello, ${'CodePen'}!</p>`, document.querySelector('#demo'));
+</script>
