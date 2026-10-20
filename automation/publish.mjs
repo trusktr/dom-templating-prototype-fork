@@ -1,4 +1,4 @@
-import {cpSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {cpSync, mkdtempSync, readdirSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {commitTree, configureAuth, destination, generated, git, initialize, output, publish, remoteHead} from './git.mjs';
@@ -6,6 +6,15 @@ import {commitTree, configureAuth, destination, generated, git, initialize, outp
 const artifacts = resolve(process.argv[2]);
 const provenance = JSON.parse(readFileSync(join(artifacts, 'provenance.json'), 'utf8'));
 if (!/^[0-9a-f]{40}$/.test(provenance.sourceSha)) throw new Error('Missing source provenance');
+function validateArtifacts(dir) {
+  for (const entry of readdirSync(dir, {withFileTypes: true})) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.isSymbolicLink()) {
+      throw new Error(`Refusing unsafe publication path: ${entry.name}`);
+    }
+    if (entry.isDirectory()) validateArtifacts(join(dir, entry.name));
+  }
+}
+validateArtifacts(artifacts);
 configureAuth();
 const url = destination();
 const dir = mkdtempSync(join(tmpdir(), 'dom-publish-'));

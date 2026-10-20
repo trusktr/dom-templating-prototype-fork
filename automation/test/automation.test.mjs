@@ -74,6 +74,15 @@ test('invalid build input fails without deleting last successful output', () => 
   assert.equal(readFileSync(join(dir, 'last-success.txt'), 'utf8'), 'keep');
 }));
 
+test('publication rejects artifact paths that could overwrite Git configuration', () => fixture((dir) => {
+  writeFileSync(join(dir, 'provenance.json'), JSON.stringify({sourceSha: 'a'.repeat(40)}));
+  const result = spawnSync(process.execPath, [join(control, 'automation/publish.mjs'), dir], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Refusing unsafe publication path: \.git/);
+}));
+
 test('workflow has safe structure and explicit job dependencies', () => {
   const workflow = readFileSync(join(control, '.github/workflows/sync-build.yml'), 'utf8');
   // Use the system YAML parser when available, without introducing a dependency.
@@ -87,6 +96,7 @@ test('workflow has safe structure and explicit job dependencies', () => {
   assert.equal(parsed.jobs.build.needs, 'sync');
   assert.deepEqual(parsed.jobs.publish.needs, ['sync', 'build']);
   assert.equal(parsed.jobs.build.permissions.contents, 'read');
+  assert.equal(parsed.jobs.build.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with['package-manager-cache'], false);
   for (const job of Object.values(parsed.jobs)) {
     assert.ok(job['timeout-minutes'] > 0);
     for (const step of job.steps) {

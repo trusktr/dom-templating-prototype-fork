@@ -48,6 +48,15 @@ sync removes the overlay and publishes the exact upstream commit. The workflow
 always checks out control code from `copilot/main`, then pins that control commit
 for the other jobs; it never executes automation from the upstream source.
 
+**Exact-mirror permission caveat:** GitHub may reject a `GITHUB_TOKEN` push that
+introduces or changes upstream `.github/workflows/*` files unless identical
+workflow paths/content already exist in this repository. `contents: write` does
+not grant Workflows administration. Such a rejection fails the sync without
+changing `main`; do not add a personal token to work around it. Keep the default
+on `main` and use overlay mode if that restriction applies. An exact mirror with
+arbitrary future upstream workflow changes cannot be guaranteed using only
+`GITHUB_TOKEN`.
+
 ## Automation
 
 Workflow: [Sync upstream and publish browser build](https://github.com/trusktr/dom-templating-prototype-fork/actions/workflows/sync-build.yml)
@@ -77,6 +86,13 @@ an administrator must make the control branch the default, then use **Run
 workflow**. Until one successful run, `main`/`build` are not initialized by this
 code's mere presence. Exact execution status is reported separately; do not
 interpret this document as evidence of a completed publication.
+
+Copilot-authored workflow changes can additionally require a human's
+**Approve and run** in Actions. The initial bootstrap push produced run
+[`39350368927`](https://github.com/trusktr/dom-templating-prototype-fork/actions/runs/39350368927)
+with conclusion **`action_required`** and **zero jobs**. This is not a compilation
+failure or a successful publication; approval is outside the workflow token's
+authority. Approve the latest run rather than rerunning an older code revision.
 
 ## Browser / CodePen
 
